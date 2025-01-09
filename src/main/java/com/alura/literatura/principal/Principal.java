@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Scanner;
 
+import com.alura.literatura.model.ContenedorResultados;
 import com.alura.literatura.model.DatosLibro;
 import com.alura.literatura.model.Libro;
 import com.alura.literatura.repository.LibroRepository;
@@ -11,6 +12,7 @@ import com.alura.literatura.service.ConsumoAPI;
 import com.alura.literatura.service.ConvierteDatos;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -18,7 +20,7 @@ public class Principal {
 
     private Scanner teclado = new Scanner(System.in);
     private ConsumoAPI consumoApi = new ConsumoAPI();
-    private final String URL_BASE = "https://gutendex.com/books";
+    private final String URL_BASE = "https://gutendex.com/books?search=";
     private ConvierteDatos conversor = new ConvierteDatos();
 
     private final LibroRepository repositorio;
@@ -75,45 +77,62 @@ public class Principal {
     }
 
     private DatosLibro getDatosLibro(String titulo) {
-        String url = URL_BASE + "/" + titulo.replace(" ", "+");
+        String url = URL_BASE + titulo.replace(" ", "%20");
         var json = consumoApi.obtenerDatos(url);
-
+    
         System.out.println("Respuesta de la API: " + json);
-
+    
         if (json == null || json.isEmpty()) {
             System.out.println("No se encontraron resultados para el libro: " + titulo);
             return null;
         }
-
+    
         try {
-            DatosLibro datos = conversor.obtenerDatos(json, DatosLibro.class);
-            return datos;
+            // Conversión de la respuesta completa a un contenedor de datos
+            var resultados = conversor.obtenerDatos(json, ContenedorResultados.class);
+            if (resultados.results().isEmpty()) {
+                System.out.println("No se encontraron libros con ese título.");
+                return null;
+            }
+    
+            // Retorna el primer libro de los resultados
+            return resultados.results().get(0);
         } catch (Exception e) {
             System.out.println("Error al procesar los datos del libro.");
             e.printStackTrace();
             return null;
         }
     }
+    
 
     private void buscarLibroWeb() {
-        System.out.print("Ingrese el título del libro: ");
-        String titulo = teclado.nextLine();
+    System.out.print("Ingrese el título del libro: ");
+    String titulo = teclado.nextLine();
 
-        Optional<Libro> libroExistente = Optional.ofNullable(repositorio.findByTitulo(titulo));
-        if (libroExistente.isPresent()) {
-            System.out.println("El libro ya está registrado: " + libroExistente.get().getTitulo());
-            return;
-        }
+    // Validar si el libro ya está registrado en la base de datos
+    Optional<Libro> libroExistente = Optional.ofNullable(repositorio.findByTitulo(titulo));
+    if (libroExistente.isPresent()) {
+        System.out.println("El libro ya está registrado: " + libroExistente.get().getTitulo());
+        return;
+    }
 
-        DatosLibro datos = getDatosLibro(titulo);
-        if (datos != null) {
+    // Obtener los datos del libro desde la API
+    DatosLibro datos = getDatosLibro(titulo);
+    if (datos != null) {
+        try {
+            // Intentar guardar el libro en la base de datos
             Libro libro = new Libro(datos);
             repositorio.save(libro);
             System.out.println("Libro registrado exitosamente: " + libro.getTitulo());
-        } else {
-            System.out.println("No se pudo registrar el libro.");
+        } catch (DataIntegrityViolationException e) {
+            // Manejar la excepción de llave duplicada
+            System.out.println("El libro ya está registrado en la base de datos.");
         }
+    } else {
+        System.out.println("No se pudo registrar el libro.");
     }
+}
+
 
     private void listarLibrosRegistrados() {
         List<Object[]> resultados = repositorio.findLibroWithActorDetails();
@@ -165,20 +184,42 @@ public class Principal {
     }
     
 
-    // Método para listar libros por idioma, donde el idioma se ingresa por teclado
     private void listarLibrosPorIdioma() {
+        // Obtener la lista de idiomas únicos del repositorio
+        List<String> idiomasDisponibles = repositorio.findDistinctIdiomas();
+    
+        if (idiomasDisponibles.isEmpty()) {
+            System.out.println("No hay idiomas registrados en la base de datos.");
+            return;
+        }
+    
+        // Mostrar los idiomas disponibles
+        System.out.println("Idiomas disponibles:");
+        for (int i = 0; i < idiomasDisponibles.size(); i++) {
+            System.out.println((i + 1) + ". " + idiomasDisponibles.get(i));
+        }
+    
         // Crear un objeto Scanner para leer la entrada del usuario
         Scanner scanner = new Scanner(System.in);
-        
-        // Solicitar al usuario que ingrese el idioma
-        System.out.print("Ingrese el idioma que desea buscar (ej. 'es' para español): ");
-        String idioma = scanner.nextLine(); // Captura la entrada del usuario
-        
-        // Llamar al método del repositorio con el idioma ingresado
-        List<Object[]> resultados = repositorio.findLibroWithActorDetailsByIdioma(idioma);
-        
+    
+        // Solicitar al usuario que seleccione un idioma de la lista
+        System.out.print("Seleccione un idioma (ingrese el número correspondiente): ");
+        int opcion = scanner.nextInt();
+    
+        // Validar la opción ingresada
+        if (opcion < 1 || opcion > idiomasDisponibles.size()) {
+            System.out.println("Opción inválida. Inténtelo de nuevo.");
+            return;
+        }
+    
+        // Obtener el idioma seleccionado
+        String idiomaSeleccionado = idiomasDisponibles.get(opcion - 1);
+    
+        // Llamar al método del repositorio con el idioma seleccionado
+        List<Object[]> resultados = repositorio.findLibroWithActorDetailsByIdioma(idiomaSeleccionado);
+    
         if (resultados.isEmpty()) {
-            System.out.println("No hay libros registrados para el idioma: " + idioma);
+            System.out.println("No hay libros registrados para el idioma: " + idiomaSeleccionado);
         } else {
             resultados.forEach(result -> {
                 String titulo = (String) result[0];
@@ -196,6 +237,7 @@ public class Principal {
             });
         }
     }
+    
     
     private void listarAutoresVivosEnAnio() {
         // Solicitar al usuario que ingrese el año

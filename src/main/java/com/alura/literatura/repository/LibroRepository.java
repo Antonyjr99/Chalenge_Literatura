@@ -42,6 +42,10 @@ public interface LibroRepository extends JpaRepository<Libro, Long> {
            "GROUP BY a.titulo, a.idiomas, a.descargas")
     List<Object[]> findLibroWithActorDetailsByIdioma(@Param("idiomas") String idioma);
 
+    @Query("SELECT DISTINCT l.idiomas FROM Libro l")
+    List<String> findDistinctIdiomas();
+
+
     @Query("SELECT a.nombre, a.anoNacimiento, a.anoFallecimiento, string_agg(l.titulo, ' || ') AS titulos " +
     "FROM Actor a " +
     "INNER JOIN Libro l ON a.libro.id = l.id " +
